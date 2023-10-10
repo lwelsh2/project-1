@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 import socket    # Basic TCP/IP communication on the internet
 import _thread   # Response computation runs concurrently with main program
-
+import os
 
 def listen(portnum):
     """
@@ -79,20 +79,31 @@ STATUS_NOT_IMPLEMENTED = "HTTP/1.0 401 Not Implemented\n\n"
 
 
 def respond(sock):
-    """
-    This server responds only to GET requests (not PUT, POST, or UPDATE).
-    Any valid GET request is answered with an ascii graphic of a cat.
-    """
     sent = 0
-    request = sock.recv(1024)  # We accept only short requests
+    request = sock.recv(1024)  
     request = str(request, encoding='utf-8', errors='strict')
     log.info("--- Received request ----")
     log.info("Request was {}\n***\n".format(request))
 
     parts = request.split()
     if len(parts) > 1 and parts[0] == "GET":
-        transmit(STATUS_OK, sock)
-        transmit(CAT, sock)
+        path = parts[1]
+        options = config.configuration()  # Get options including DOCROOT
+        resolved_path = os.path.abspath(os.path.join(options.DOCROOT, path[1:]))  # Use options.DOCROOT
+        if "~" in path or ".." in path or not resolved_path.startswith(os.path.abspath(options.DOCROOT)):
+            log.info("Illegal characters or invalid path in URL: {}".format(path))
+            transmit(STATUS_FORBIDDEN, sock)
+            transmit("\nError 403 Forbidden: Illegal characters or invalid path in URL: {}\n".format(path), sock)
+        else:
+            if os.path.isfile(resolved_path):  # Check if it's a file
+                with open(resolved_path, 'rb') as file:
+                    content = file.read()
+                transmit(STATUS_OK, sock)
+                sent += sock.send(content)
+            else:
+                log.info("File not found or is a directory: {}".format(resolved_path))
+                transmit(STATUS_NOT_FOUND, sock)
+                transmit("\nError 404 Not Found: File not found: {}\n".format(resolved_path), sock)
     else:
         log.info("Unhandled request: {}".format(request))
         transmit(STATUS_NOT_IMPLEMENTED, sock)
@@ -101,6 +112,10 @@ def respond(sock):
     sock.shutdown(socket.SHUT_RDWR)
     sock.close()
     return
+
+
+
+
 
 
 def transmit(msg, sock):
